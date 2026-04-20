@@ -1073,7 +1073,7 @@ void GLSLPostProcessor::registerPerformancePasses(Optimizer& optimizer, Config c
 
     RegisterPass(CreateWrapOpKillPass());
     RegisterPass(CreateDeadBranchElimPass());
-    RegisterPass(CreateMergeReturnPass(), MaterialBuilder::TargetApi::METAL);
+    RegisterPass(CreateMergeReturnPass());
     RegisterPass(CreateInlineExhaustivePass());
     RegisterPass(CreateAggressiveDCEPass());
     RegisterPass(CreatePrivateToLocalPass());
