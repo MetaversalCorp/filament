@@ -120,6 +120,10 @@ public:
 
     void prepareDynamicLights(Froxelizer& froxelizer, bool enableFroxelViz) noexcept;
 
+    // Number of "global" (froxel-bypassing) punctual lights, at the front of the
+    // lights UBO, evaluated on every lit fragment by the shader. Set per-frame.
+    void setGlobalLightCount(uint32_t count) noexcept;
+
     void prepareShadowVSM(TextureHandle texture,
             VsmShadowOptions const& options) noexcept;
 

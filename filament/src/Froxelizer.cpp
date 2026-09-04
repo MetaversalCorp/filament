@@ -679,6 +679,13 @@ void Froxelizer::froxelizeLoop(FEngine& engine,
         constexpr float maxCosSquared = 0.99992385f;    // cos(0.5 degrees)^2
 
         for (size_t i = offset; i < count; i += stride) {
+            // Global lights occupy positional indices [0, mGlobalLightCount) and
+            // are evaluated on every fragment; skip them so they are never added
+            // to a froxel. Their index slot in the lights UBO is left unreferenced
+            // by the froxel records, which is exactly what we want.
+            if (i < mGlobalLightCount) {
+                continue;
+            }
             const size_t j = i + FScene::DIRECTIONAL_LIGHTS_COUNT;
             FLightManager::Instance const li = instances[j];
             LightParams light = {

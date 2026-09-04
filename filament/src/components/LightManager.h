@@ -84,6 +84,7 @@ public:
         Type type : 3;
         bool shadowCaster : 1;
         bool lightCaster : 1;
+        bool global : 1;        // bypass froxel culling, evaluate on every fragment
     };
 
     struct SpotParams {
@@ -132,6 +133,10 @@ public:
 
     bool isLightCaster(Instance const i) const noexcept {
         return getLightType(i).lightCaster;
+    }
+
+    bool isGlobalLight(Instance const i) const noexcept {
+        return getLightType(i).global;
     }
 
     bool isPointLight(Instance const i) const noexcept {

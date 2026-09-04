@@ -126,7 +126,7 @@ struct PerViewUib { // NOLINT(cppcoreguidelines-pro-type-member-init)
     int32_t lightChannels;                      // light channel bits
     math::float2 froxelCountXY;
     int enableFroxelViz;
-    int dynReserved0;
+    int globalLightCount;           // count of froxel-bypassing punctual lights at front of light UBO
     int dynReserved1;
     int dynReserved2;
 

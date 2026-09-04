@@ -545,7 +545,9 @@ private:
             FScene::RenderableSoa& renderableData,
             utils::Range<uint32_t> visibleRenderables) noexcept;
 
-    static void prepareVisibleLights(FLightManager const& lcm,
+    // Returns the number of visible "global" (froxel-bypassing) punctual lights,
+    // which are partitioned to the front of the positional-light range.
+    static uint32_t prepareVisibleLights(FLightManager const& lcm,
             utils::Slice<float> scratch,
             math::mat4f const& viewMatrix, Frustum const& frustum,
             FScene::LightSoa& lightData) noexcept;
@@ -640,6 +642,7 @@ private:
     Range mVisibleDirectionalShadowCasters;
     Range mSpotLightShadowCasters;
     uint32_t mRenderableUBOElementCount = 0;
+    mutable uint32_t mVisibleGlobalLightCount = 0;
     mutable bool mHasDirectionalLighting = false;
     mutable bool mHasDynamicLighting = false;
     mutable bool mHasShadowing = false;

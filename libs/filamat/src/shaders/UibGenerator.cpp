@@ -143,7 +143,7 @@ BufferInterfaceBlock const& UibGenerator::getPerViewUib() noexcept  {
             { "lightChannels",          0, Type::INT                     },
             { "froxelCountXY",          0, Type::FLOAT2                  },
             { "enableFroxelViz",        0, Type::INT                     },
-            { "dynReserved0",           0, Type::INT                     },
+            { "globalLightCount",       0, Type::INT                     },
             { "dynReserved1",           0, Type::INT                     },
             { "dynReserved2",           0, Type::INT                     },
 

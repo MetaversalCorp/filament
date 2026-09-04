@@ -485,6 +485,28 @@ public:
         Builder& castLight(bool enable) noexcept;
 
         /**
+         * Whether this is a "global" punctual light (disabled by default).
+         *
+         * A global light bypasses froxel (clustered) culling entirely and is
+         * evaluated on every lit fragment directly in the shader. This makes a
+         * point or spot light illuminate the whole scene regardless of its
+         * distance from the camera, which is required for sources that sit far
+         * outside the froxel-safe band (e.g. a star lighting a planetary system,
+         * or a light nested in a fabric that has been scaled up enormously).
+         *
+         * Global lights are still real position-based punctual lights (physical
+         * inverse-square falloff applies); they simply are not distance-culled by
+         * the froxel grid and do not receive the froxel "light-far" fade. Keep the
+         * count of global lights small -- every global light costs one iteration
+         * per lit fragment.
+         *
+         * @param enable Enables or disables global (unculled) evaluation.
+         *
+         * @return This Builder, for chaining calls.
+         */
+        Builder& global(bool enable) noexcept;
+
+        /**
          * Sets the initial position of the light in world space.
          *
          * @param position Light's position in world space. The default is at the origin.

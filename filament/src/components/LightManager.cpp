@@ -51,6 +51,7 @@ struct LightManager::BuilderDetails {
     Type mType = Type::DIRECTIONAL;
     bool mCastShadows = false;
     bool mCastLight = true;
+    bool mGlobal = false;
     uint8_t mChannels = 1u;
     float3 mPosition = {};
     float mFalloff = 1.0f;
@@ -89,6 +90,11 @@ LightManager::Builder& LightManager::Builder::shadowOptions(const ShadowOptions&
 
 LightManager::Builder& LightManager::Builder::castLight(bool const enable) noexcept {
     mImpl->mCastLight = enable;
+    return *this;
+}
+
+LightManager::Builder& LightManager::Builder::global(bool const enable) noexcept {
+    mImpl->mGlobal = enable;
     return *this;
 }
 
@@ -195,6 +201,7 @@ void FLightManager::create(const Builder& builder, Entity const entity) {
         lightType.type = builder->mType;
         lightType.shadowCaster = builder->mCastShadows;
         lightType.lightCaster = builder->mCastLight;
+        lightType.global = builder->mGlobal;
 
         mManager[i].channels = builder->mChannels;
 

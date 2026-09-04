@@ -108,6 +108,17 @@ float getDistanceAttenuation(const highp vec3 posToLight, float falloff) {
     return attenuation / max(distanceSquare, 1e-4);
 }
 
+// Distance attenuation for "global" (froxel-bypassing) lights. Identical to
+// getDistanceAttenuation but WITHOUT the froxel "light-far" fade: a global light
+// (e.g. a star) must reach fragments arbitrarily far from the camera, so we must
+// not fade its contribution by the fragment's camera distance.
+float getDistanceAttenuationNoFar(const highp vec3 posToLight, float falloff) {
+    float distanceSquare = dot(posToLight, posToLight);
+    float attenuation = getSquareFalloffAttenuation(distanceSquare, falloff);
+    // Assume a punctual light occupies a volume of 1cm to avoid a division by 0
+    return attenuation / max(distanceSquare, 1e-4);
+}
+
 float getAngleAttenuation(const highp vec3 lightDir, const highp vec3 l, const highp vec2 scaleOffset) {
     float cd = dot(lightDir, l);
     float attenuation = saturate(cd * scaleOffset.x + scaleOffset.y);
@@ -123,7 +134,7 @@ float getAngleAttenuation(const highp vec3 lightDir, const highp vec3 l, const h
  * lightsUniforms uniform buffer.
  */
 
-Light getLight(const uint lightIndex) {
+Light getLight(const uint lightIndex, const bool applyFarAttenuation) {
     // retrieve the light data from the UBO
 
     highp mat4 data = lightsUniforms.lights[lightIndex];
@@ -148,7 +159,9 @@ Light getLight(const uint lightIndex) {
     light.colorIntensity.rgb = colorIES.rgb;
     light.colorIntensity.w = computePreExposedIntensity(intensity, frameUniforms.exposure);
     light.l = normalize(posToLight);
-    light.attenuation = getDistanceAttenuation(posToLight, positionFalloff.w);
+    light.attenuation = applyFarAttenuation
+            ? getDistanceAttenuation(posToLight, positionFalloff.w)
+            : getDistanceAttenuationNoFar(posToLight, positionFalloff.w);
     light.direction = direction;
     light.NoL = saturate(dot(shading_normal, light.l));
     light.worldPosition = positionFalloff.xyz;
@@ -168,6 +181,81 @@ Light getLight(const uint lightIndex) {
     }
 #endif
     return light;
+}
+
+/**
+ * Shades a single punctual light (point or spot) into the accumulated color.
+ * Shared by the froxel-culled and the global (unculled) light loops so both
+ * paths run identical channel-masking, shadowing and surface-shading logic.
+ * The Light is taken by value because the shadow path mutates it locally.
+ */
+void shadePunctualLight(const MaterialInputs material, const PixelParams pixel,
+        Light light, const int channels, inout vec3 color) {
+    if ((light.channels & channels) == 0) {
+        return;
+    }
+
+#if defined(MATERIAL_CAN_SKIP_LIGHTING)
+    if (light.NoL <= 0.0 || light.attenuation <= 0.0) {
+        return;
+    }
+#endif
+
+    float visibility = 1.0;
+#if defined(VARIANT_HAS_SHADOWING)
+    if (light.NoL > 0.0) {
+        if (light.castsShadows) {
+            int shadowIndex = light.shadowIndex;
+            if (light.lightType == LIGHT_TYPE_POINT) {
+                // point-light shadows are sampled from a direction
+                highp vec3 r = getWorldPosition() - light.worldPosition;
+                int face = getPointLightFace(r);
+                shadowIndex += face;
+                light.zLight = dot(shadowUniforms.shadows[shadowIndex].lightFromWorldZ,
+                        vec4(getWorldPosition(), 1.0));
+            }
+            highp vec4 shadowPosition = getShadowPosition(shadowIndex, light.direction, light.zLight);
+            visibility = shadow(false, sampler0_shadowMap, shadowIndex,
+                    shadowPosition, light.zLight);
+#if defined(MATERIAL_HAS_SHADOW_STRENGTH)
+            applyShadowStrength(visibility, material.shadowStrength);
+#endif
+        }
+        if (light.contactShadows && visibility > 0.0) {
+            if ((object_uniforms_flagsChannels & FILAMENT_OBJECT_CONTACT_SHADOWS_BIT) != 0) {
+                visibility *= 1.0 - screenSpaceContactShadow(light.l);
+            }
+        }
+#if defined(MATERIAL_CAN_SKIP_LIGHTING)
+        if (visibility <= 0.0) {
+            return;
+        }
+#endif
+    }
+#endif
+
+#if defined(MATERIAL_HAS_CUSTOM_SURFACE_SHADING)
+    color.rgb += customSurfaceShading(material, pixel, light, visibility);
+#else
+    color.rgb += surfaceShading(pixel, light, visibility);
+#endif
+}
+
+/**
+ * Evaluates the "global" (froxel-bypassing) punctual lights. These occupy the
+ * first frameUniforms.globalLightCount entries of the lights UBO and are applied
+ * to every lit fragment regardless of distance, so a source arbitrarily far from
+ * the camera (e.g. a star) still lights the scene. They use physical
+ * inverse-square falloff but no froxel "light-far" fade.
+ */
+void evaluateGlobalPunctualLights(const MaterialInputs material,
+        const PixelParams pixel, inout vec3 color) {
+    int channels = object_uniforms_flagsChannels & 0xFF;
+    uint count = uint(frameUniforms.globalLightCount);
+    for (uint i = 0u; i < count; i++) {
+        Light light = getLight(i, false);
+        shadePunctualLight(material, pixel, light, channels, color);
+    }
 }
 
 /**
@@ -195,55 +283,8 @@ void evaluatePunctualLights(const MaterialInputs material,
     // Iterate point lights
     for ( ; index < end; index++) {
         uint lightIndex = getLightIndex(index);
-        Light light = getLight(lightIndex);
-        if ((light.channels & channels) == 0) {
-            continue;
-        }
-
-#if defined(MATERIAL_CAN_SKIP_LIGHTING)
-        if (light.NoL <= 0.0 || light.attenuation <= 0.0) {
-            continue;
-        }
-#endif
-
-        float visibility = 1.0;
-#if defined(VARIANT_HAS_SHADOWING)
-        if (light.NoL > 0.0) {
-            if (light.castsShadows) {
-                int shadowIndex = light.shadowIndex;
-                if (light.lightType == LIGHT_TYPE_POINT) {
-                    // point-light shadows are sampled from a direction
-                    highp vec3 r = getWorldPosition() - light.worldPosition;
-                    int face = getPointLightFace(r);
-                    shadowIndex += face;
-                    light.zLight = dot(shadowUniforms.shadows[shadowIndex].lightFromWorldZ,
-                            vec4(getWorldPosition(), 1.0));
-                }
-                highp vec4 shadowPosition = getShadowPosition(shadowIndex, light.direction, light.zLight);
-                visibility = shadow(false, sampler0_shadowMap, shadowIndex,
-                        shadowPosition, light.zLight);
-#if defined(MATERIAL_HAS_SHADOW_STRENGTH)
-                applyShadowStrength(visibility, material.shadowStrength);
-#endif
-            }
-            if (light.contactShadows && visibility > 0.0) {
-                if ((object_uniforms_flagsChannels & FILAMENT_OBJECT_CONTACT_SHADOWS_BIT) != 0) {
-                    visibility *= 1.0 - screenSpaceContactShadow(light.l);
-                }
-            }
-#if defined(MATERIAL_CAN_SKIP_LIGHTING)
-            if (visibility <= 0.0) {
-                continue;
-            }
-#endif
-        }
-#endif
-
-#if defined(MATERIAL_HAS_CUSTOM_SURFACE_SHADING)
-        color.rgb += customSurfaceShading(material, pixel, light, visibility);
-#else
-        color.rgb += surfaceShading(pixel, light, visibility);
-#endif
+        Light light = getLight(lightIndex, true);
+        shadePunctualLight(material, pixel, light, channels, color);
     }
 
     if (CONFIG_DEBUG_FROXEL_VISUALIZATION) {

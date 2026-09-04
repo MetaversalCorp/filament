@@ -295,6 +295,9 @@ vec4 evaluateLights(const MaterialInputs material) {
 
 #if defined(VARIANT_HAS_DYNAMIC_LIGHTING)
     evaluatePunctualLights(material, pixel, color);
+    // Global (froxel-bypassing) punctual lights: applied on every lit fragment
+    // so distant sources (e.g. a star) light the whole scene.
+    evaluateGlobalPunctualLights(material, pixel, color);
 #endif
 
 #if defined(BLEND_MODE_FADE) && !defined(SHADING_MODEL_UNLIT)

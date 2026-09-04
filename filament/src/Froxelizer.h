@@ -127,6 +127,10 @@ public:
 
     float getLightFar() const noexcept { return mZLightFar; }
 
+    // Number of "global" lights at the front of the positional-light range that
+    // must be skipped by froxelization (they are evaluated on every fragment).
+    void setGlobalLightCount(uint32_t const count) noexcept { mGlobalLightCount = count; }
+
     // Update Records and Froxels texture with lights data. This is thread-safe.
     void froxelizeLights(FEngine& engine, math::mat4f const& viewMatrix,
             const FScene::LightSoa& lightData) noexcept;
@@ -282,6 +286,7 @@ private:
     uint16_t mFroxelCountY = 0;
     uint16_t mFroxelCountZ = 0;
     uint32_t mFroxelCount = 0;
+    uint32_t mGlobalLightCount = 0;     // front-partitioned globals to skip in froxelization
     math::uint2 mFroxelDimension = {};
     math::float4 mClipTransform = { 1, 1, 0, 0 };
 

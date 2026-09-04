@@ -492,6 +492,11 @@ void FView::prepareLighting(FEngine& engine, CameraInfo const& cameraInfo) noexc
         scene->prepareDynamicLights(cameraInfo, mLightUbh);
     }
 
+    // Number of "global" (froxel-bypassing) punctual lights, evaluated on every
+    // lit fragment. Set every frame (independent of froxel-config changes) so the
+    // shader's global-light loop always sees the correct count.
+    getColorPassDescriptorSet().setGlobalLightCount(mVisibleGlobalLightCount);
+
     // here the array of visible lights has been shrunk to CONFIG_MAX_LIGHT_COUNT
     FILAMENT_TRACING_VALUE(FILAMENT_TRACING_CATEGORY_FILAMENT,
             "visibleLights", lightData.size() - FScene::DIRECTIONAL_LIGHTS_COUNT);
@@ -621,10 +626,10 @@ void FView::prepare(FEngine& engine, DriverApi& driver, RootArenaScope& rootAren
                 (positionalLightCount + 3u) & ~3u, CACHELINE_SIZE);
 
         prepareVisibleLightsJob = js.runAndRetain(js.createJob(nullptr,
-                [&engine, distances, positionalLightCount, &viewMatrix = cameraInfo.view, &cullingFrustum,
+                [this, &engine, distances, positionalLightCount, &viewMatrix = cameraInfo.view, &cullingFrustum,
                  &lightData = scene->getLightData()]
                         (JobSystem&, JobSystem::Job*) {
-                    prepareVisibleLights(engine.getLightManager(),
+                    mVisibleGlobalLightCount = prepareVisibleLights(engine.getLightManager(),
                             { distances, distances + positionalLightCount },
                             viewMatrix, cullingFrustum, lightData);
                 }));
@@ -673,6 +678,10 @@ void FView::prepare(FEngine& engine, DriverApi& driver, RootArenaScope& rootAren
         // As soon as prepareVisibleLight finishes, we can kick-off the froxelization
         if (hasDynamicLighting()) {
             auto& froxelizer = mFroxelizer;
+            // Global lights are partitioned to the front of the positional-light
+            // range by prepareVisibleLights; tell the froxelizer to skip them so
+            // they are not double-counted (they are evaluated on every fragment).
+            froxelizer.setGlobalLightCount(mVisibleGlobalLightCount);
             if (froxelizer.prepare(driver, rootArenaScope, viewport,
                     cameraInfo.projection, cameraInfo.zn, cameraInfo.zf,
                     cameraInfo.clipTransform)) {
@@ -1226,7 +1235,7 @@ void FView::cullRenderables(JobSystem&,
     functor(0, renderableData.size());
 }
 
-void FView::prepareVisibleLights(FLightManager const& lcm,
+uint32_t FView::prepareVisibleLights(FLightManager const& lcm,
         Slice<float> scratch,
         mat4f const& viewMatrix, Frustum const& frustum,
         FScene::LightSoa& lightData) noexcept {
@@ -1246,7 +1255,12 @@ void FView::prepareVisibleLights(FLightManager const& lcm,
     // skip directional light
     for (size_t i = FScene::DIRECTIONAL_LIGHTS_COUNT; i < lightData.size(); i++) {
         FLightManager::Instance const li = instanceArray[i];
-        if (visibleArray[i]) {
+        // A "global" light bypasses froxel culling and is evaluated on every lit
+        // fragment, so it must be considered visible regardless of the view
+        // frustum (a star can sit far outside the frustum yet still light the
+        // scene). It still respects lightCaster and a positive intensity.
+        bool const global = lcm.isGlobalLight(li);
+        if (global || visibleArray[i]) {
             if (!lcm.isLightCaster(li)) {
                 visibleArray[i] = 0;
                 continue;
@@ -1256,7 +1270,8 @@ void FView::prepareVisibleLights(FLightManager const& lcm,
                 continue;
             }
             // cull spotlights that cannot possibly intersect the view frustum
-            if (lcm.isSpotLight(li)) {
+            // (skipped for global lights, which are never frustum-culled)
+            if (!global && lcm.isSpotLight(li)) {
                 const float3 position = sphereArray[i].xyz;
                 const float3 axis = directions[i];
                 const float cosSqr = lcm.getCosOuterSquared(li);
@@ -1271,6 +1286,8 @@ void FView::prepareVisibleLights(FLightManager const& lcm,
                     continue;
                 }
             }
+            // mark visible (force it on for a global light the culler rejected)
+            visibleArray[i] = 1;
             visibleLightCount++;
         }
     }
@@ -1297,23 +1314,42 @@ void FView::prepareVisibleLights(FLightManager const& lcm,
 
     // number of point/spotlights
     size_t const positionalLightCount = visibleLightCount - FScene::DIRECTIONAL_LIGHTS_COUNT;
+    uint32_t globalLightCount = 0;
     if (positionalLightCount) {
         assert_invariant(positionalLightCount <= scratch.size());
+
+        // Partition the visible positional lights so that all global lights come
+        // first (they are evaluated directly in the shader and excluded from the
+        // froxel grid; keeping them at the front lets both the froxelizer and the
+        // shader address them by a simple [0, globalLightCount) range). The order
+        // among globals does not matter.
+        auto const globalsEnd = std::partition(
+                lightData.begin() + FScene::DIRECTIONAL_LIGHTS_COUNT,
+                lightData.begin() + visibleLightCount,
+                [&lcm](auto const& it) {
+                    return lcm.isGlobalLight(it.template get<FScene::LIGHT_INSTANCE>());
+                });
+        globalLightCount = uint32_t(
+                globalsEnd - (lightData.begin() + FScene::DIRECTIONAL_LIGHTS_COUNT));
+
         // pre-compute the lights' distance to the camera, for sorting below
         // - we don't skip the directional light, because we don't care, it's ignored during sorting
         float* const UTILS_RESTRICT distances = scratch.data();
         float4 const* const UTILS_RESTRICT spheres = lightData.data<FScene::POSITION_RADIUS>();
         computeLightCameraDistances(distances, viewMatrix, spheres, visibleLightCount);
 
-        // skip directional light
+        // Sort only the non-global (froxel-culled) remainder by distance; global
+        // lights stay pinned at the front so they are never dropped by the resize.
         Zip2Iterator b = { lightData.begin(), distances };
-        std::sort(b + FScene::DIRECTIONAL_LIGHTS_COUNT, b + visibleLightCount,
+        std::sort(b + FScene::DIRECTIONAL_LIGHTS_COUNT + globalLightCount, b + visibleLightCount,
                 [](auto const& lhs, auto const& rhs) { return lhs.second < rhs.second; });
     }
 
     // drop excess lights
     lightData.resize(std::min(visibleLightCount,
             CONFIG_MAX_LIGHT_COUNT + FScene::DIRECTIONAL_LIGHTS_COUNT));
+
+    return globalLightCount;
 }
 
 // These methods need to exist so clang honors the __restrict__ keyword, which in turn
