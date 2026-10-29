@@ -92,12 +92,14 @@ inline double MATH_PURE isqrt(double x) noexcept {
 }
 
 inline int signbit(float x) noexcept {
-#if __has_builtin(__builtin_signbitf)
-    // Note: on Android NDK, signbit() is a function call -- not what we want.
-    return __builtin_signbitf(x);
-#else
-    return std::signbit(x);
-#endif
+    // Extract the IEEE-754 sign bit directly as 0 or 1. The previous
+    // __builtin_signbitf path returns, under the Clang fast-math build on
+    // Apple Silicon, a value whose bit 0 is clear for negatives; Culler folds
+    // the result into an int and returns `& 1`, so every renderable was culled.
+    // A union bitcast is pure integer work -- immune to fast-math and
+    // bit-0-correct on every compiler.
+    union { float f; unsigned u; } caster = { x };
+    return int(caster.u >> 31);
 }
 
 /*
