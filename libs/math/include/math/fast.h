@@ -21,6 +21,7 @@
 #include <math/scalar.h>
 
 #include <cmath>
+#include <cstring>
 #include <type_traits>
 
 #include <stdint.h>
@@ -92,14 +93,17 @@ inline double MATH_PURE isqrt(double x) noexcept {
 }
 
 inline int signbit(float x) noexcept {
-    // Extract the IEEE-754 sign bit directly as 0 or 1. The previous
-    // __builtin_signbitf path returns, under the Clang fast-math build on
-    // Apple Silicon, a value whose bit 0 is clear for negatives; Culler folds
-    // the result into an int and returns `& 1`, so every renderable was culled.
-    // A union bitcast is pure integer work -- immune to fast-math and
-    // bit-0-correct on every compiler.
-    union { float f; unsigned u; } caster = { x };
-    return int(caster.u >> 31);
+    // Extract the IEEE-754 sign bit as exactly 0 or 1. __builtin_signbitf
+    // returned a value whose bit 0 was clear for negatives under the Clang
+    // fast-math build; Culler folds the result into an int and returns `& 1`,
+    // so every renderable was culled. A union bitcast fixed Halogen's own
+    // translation unit but was still miscompiled inside Filament's Culler under
+    // its aggressive optimizer flags (the aliased read was elided). std::memcpy
+    // is the one bitcast the optimizer cannot reorder or elide -- immune to
+    // fast-math and strict aliasing on every compiler.
+    unsigned u;
+    std::memcpy(&u, &x, sizeof(u));
+    return int(u >> 31);
 }
 
 /*
