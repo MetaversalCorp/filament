@@ -26,6 +26,8 @@
 #include <math/mat4.h>
 
 #include <algorithm>
+#include <cstdint>
+#include <cstring>
 
 using namespace filament::math;
 
@@ -72,6 +74,32 @@ void Frustum::setProjection(const mat4f& pv) {
     mPlanes[3] = t;
     mPlanes[4] = f;
     mPlanes[5] = n;
+
+    // On platforms that normalize the planes above under fast-math (clang on
+    // Apple Silicon), a near-degenerate far plane -- produced by scenes with an
+    // extreme depth range -- can push 1 / length(.xyz) to Inf/NaN, poisoning
+    // that plane. Culler's dot < 0 visibility test then fails for the poisoned
+    // plane (NaN < 0 is false) and every renderable is culled. Detect any plane
+    // with a non-finite component via an integer exponent test (immune to
+    // fast-math) and replace it with one that always reports "inside"
+    // (dot = w = -1 < 0) -- correct for a degenerate or infinite far plane in
+    // both the box and sphere tests.
+    for (size_t i = 0; i < 6; ++i) {
+        uint32_t bits[4];
+        std::memcpy(&bits[0], &mPlanes[i].x, sizeof(float));
+        std::memcpy(&bits[1], &mPlanes[i].y, sizeof(float));
+        std::memcpy(&bits[2], &mPlanes[i].z, sizeof(float));
+        std::memcpy(&bits[3], &mPlanes[i].w, sizeof(float));
+        bool nonFinite = false;
+        for (size_t k = 0; k < 4; ++k) {
+            if ((bits[k] & 0x7F800000u) == 0x7F800000u) {
+                nonFinite = true;
+            }
+        }
+        if (nonFinite) {
+            mPlanes[i] = float4{ 0.0f, 0.0f, 0.0f, -1.0f };
+        }
+    }
 }
 
 float4 Frustum::getNormalizedPlane(Plane plane) const noexcept {
