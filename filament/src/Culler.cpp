@@ -109,9 +109,11 @@ bool Culler::intersects(Frustum const& frustum, Box const& box) noexcept {
     // The main intersection routine assumes multiples of 8 items
     float3 centers[MODULO];
     float3 extents[MODULO];
-    result_type results[MODULO];
-    centers[0] = box.center;
-    extents[0] = box.halfExtent;
+    result_type results[MODULO] = {};
+    for (size_t i = 0; i < MODULO; ++i) {
+        centers[i] = box.center;
+        extents[i] = box.halfExtent;
+    }
     intersects(results, frustum, centers, extents, MODULO, 0);
     return bool(results[0] & 1);
 }

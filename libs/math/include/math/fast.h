@@ -21,7 +21,6 @@
 #include <math/scalar.h>
 
 #include <cmath>
-#include <cstring>
 #include <type_traits>
 
 #include <stdint.h>
@@ -93,17 +92,15 @@ inline double MATH_PURE isqrt(double x) noexcept {
 }
 
 inline int signbit(float x) noexcept {
-    // Extract the IEEE-754 sign bit as exactly 0 or 1. __builtin_signbitf
-    // returned a value whose bit 0 was clear for negatives under the Clang
-    // fast-math build; Culler folds the result into an int and returns `& 1`,
-    // so every renderable was culled. A union bitcast fixed Halogen's own
-    // translation unit but was still miscompiled inside Filament's Culler under
-    // its aggressive optimizer flags (the aliased read was elided). std::memcpy
-    // is the one bitcast the optimizer cannot reorder or elide -- immune to
-    // fast-math and strict aliasing on every compiler.
-    unsigned u;
-    std::memcpy(&u, &x, sizeof(u));
-    return int(u >> 31);
+    // Return 1 when x is negative, 0 otherwise -- exactly the "inside this
+    // plane" test Culler wants (Culler is the only caller). Earlier bitcast
+    // forms (union and std::memcpy) reinterpret the float's bits as an int;
+    // clang's loop vectorizer under Filament's fast-math flags ELIDES that
+    // reinterpreting load inside Culler's vectorized intersects loop, so every
+    // lane read 0 and every renderable was culled on Apple Silicon. A direct
+    // float comparison is a native vectorizable predicate that cannot be
+    // elided, and is identical for culling (-0.0 / NaN signs are irrelevant).
+    return int(x < 0.0f);
 }
 
 /*
